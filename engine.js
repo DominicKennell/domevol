@@ -22,15 +22,22 @@
   }
 
   // A growing set of films with lazily cached pairwise similarity.
-  function Catalog() { this.films = []; this.index = new Map(); this.cache = new Map(); }
+  function Catalog(opts) {
+    this.films = []; this.index = new Map(); this.cache = new Map();
+    opts = opts || {};   // wording and thresholds, so the same engine can rank books as well as films
+    this.person = opts.person || 'director'; this.group = opts.group || 'Shares'; this.hiRating = opts.hiRating == null ? 8.0 : opts.hiRating; this.hiVotes = opts.hiVotes == null ? 1000 : opts.hiVotes;
+  }
   Catalog.prototype.add = function (f) {
     if (this.index.has(f.id)) return this.index.get(f.id);
     var i = this.films.length; this.films.push(f); this.index.set(f.id, i); return i;
   };
   Catalog.prototype.idx = function (id) { return this.index.has(id) ? this.index.get(id) : -1; };
   Catalog.prototype.sims = function (a, b) {
-    var k = a * 65536 + b, v = this.cache.get(k);
-    if (!v) { v = simVec(this.films[a], this.films[b]); this.cache.set(k, v); }
+    var k = a * 1048576 + b, v = this.cache.get(k);
+    if (!v) {
+      if (this.cache.size > 400000) this.cache.clear();   // bound memory on big catalogues
+      v = simVec(this.films[a], this.films[b]); this.cache.set(k, v);
+    }
     return v;
   };
   Catalog.prototype.sim = function (a, b, g) { return this.sims(a, b)[g]; };
@@ -50,14 +57,14 @@
   }
 
   // Score every film against every profile film separately; a film's score is its best match.
-  function scoreAll(C, profile, w, excluded) {
+  function scoreAll(C, profile, w, excluded, bias) {
     var N = C.films.length;
     var per = profile.map(function (s) {
       var row = new Float64Array(N);
       for (var f = 0; f < N; f++) {
         if (excluded.has(f)) { row[f] = -Infinity; continue; }
         var v = C.sims(s, f);
-        row[f] = w[0] * v[0] + w[1] * v[1] + w[2] * v[2] + w[3] * v[3] + w[4] * v[4] + w[5] * C.films[f].q;
+        row[f] = w[0] * v[0] + w[1] * v[1] + w[2] * v[2] + w[3] * v[3] + w[4] * v[4] + w[5] * C.films[f].q + (bias ? bias[f] : 0);
       }
       return row;
     });
@@ -142,15 +149,15 @@
   // Human-readable reasons a film matches a given profile film.
   function explain(C, seed, f, w) {
     var A = C.films[seed], B = C.films[f], v = C.sims(seed, f), out = [], c = [];
-    if (v[1] === 1) c.push([w[1] + 0.2, 'Same director, ' + B.director]);
+    if (v[1] === 1) c.push([w[1] + 0.2, 'Same ' + C.person + ', ' + B.director]);
     var th = A.themes.filter(function (t) { return B.themes.indexOf(t) >= 0; });
     if (th.length) c.push([w[3] * v[3] + 0.05, 'Shared themes: ' + th.slice(0, 4).join(', ')]);
     var ge = A.genres.filter(function (t) { return B.genres.indexOf(t) >= 0; });
     if (ge.length) c.push([w[0] * v[0], 'Genre overlap: ' + ge.join(', ')]);
     var ca = A.cast.filter(function (t) { return B.cast.indexOf(t) >= 0; });
-    if (ca.length) c.push([w[2] * v[2] + 0.1, 'Shares ' + ca.slice(0, 2).join(' and ')]);
+    if (ca.length) c.push([w[2] * v[2] + 0.1, C.group + ' ' + ca.slice(0, 2).join(' and ')]);
     if (v[4] > 0.75) c.push([w[4] * v[4] * 0.5, 'Same era (' + B.year + ')']);
-    if (B.rating >= 8.0 && B.votes >= 1000) c.push([w[5] * B.q * 0.5, 'Very highly rated (' + B.rating.toFixed(1) + ')']);
+    if (B.rating >= C.hiRating && B.votes >= C.hiVotes) c.push([w[5] * B.q * 0.5, 'Very highly rated (' + B.rating.toFixed(1) + ')']);
     c.sort(function (x, y) { return y[0] - x[0]; });
     for (var i = 0; i < c.length && out.length < 3; i++) out.push(c[i][1]);
     return out;
@@ -161,7 +168,23 @@
   function recommend(C, profile, w, excluded, rng, o) {
     o = o || {};
     var N = C.films.length;
-    var sc = scoreAll(C, profile, w, excluded);
+    var g = Math.max(0, Math.min(1, o.gems || 0)), bias = null;
+    if (g > 0) {        // "hidden gems": judge quality by the raw rating, mark down very popular titles, and drop the most-voted ones outright
+      var votes = C.films.map(function (m) { return m.votes || 0; }), mx = 1;
+      for (var vi = 0; vi < N; vi++) if (votes[vi] > mx) mx = votes[vi];
+      var lmx = Math.log(1 + mx);
+      bias = new Float64Array(N);
+      for (var bi2 = 0; bi2 < N; bi2++) {
+        var m0 = C.films[bi2], rq = m0.rq != null ? m0.rq : Math.max(0, Math.min(1, ((m0.rating || 0) - 6.5) / 2.8));
+        bias[bi2] = g * (w[5] * (rq - m0.q) - 0.5 * Math.log(1 + votes[bi2]) / lmx);
+      }
+      if (g > 0.25) {
+        var sorted = votes.slice().sort(function (a, b) { return b - a; }), cut = sorted[Math.min(N - 1, Math.floor(N * 0.6 * g))];
+        excluded = new Set(excluded);
+        for (var ei = 0; ei < N; ei++) if (votes[ei] > cut) excluded.add(ei);
+      }
+    }
+    var sc = scoreAll(C, profile, w, excluded, bias);
     var idx = []; for (var f = 0; f < N; f++) if (sc.score[f] > -Infinity) idx.push(f);
     idx.sort(function (x, y) { return sc.score[y] - sc.score[x]; });
     var wild = o.wild == null ? 2 : Math.max(0, Math.min(4, Math.round(o.wild)));
@@ -172,7 +195,9 @@
       return { id: f2, wildcard: false, seed: profile[sc.who[f2]], why: explain(C, profile[sc.who[f2]], f2, w) };
     });
     // wildcards: stretch picks from the mid-ranked, well-regarded films
-    var okFilm = function (f3) { var m = C.films[f3]; return picks.indexOf(f3) < 0 && m.rating >= 7.0 && m.votes >= 500; };
+    var minR = o.minRating == null ? 7.0 : o.minRating, minV = o.minVotes == null ? 500 : o.minVotes;
+    if (g > 0) minV = Math.min(minV, Math.round(minV * (1 - 0.7 * g)));
+    var okFilm = function (f3) { var m = C.films[f3]; return picks.indexOf(f3) < 0 && m.rating >= minR && m.votes >= minV; };
     var pool = idx.slice(40, 130).filter(okFilm);
     if (pool.length < 2) pool = idx.slice(10).filter(okFilm);
     for (var k = 0; k < wild && pool.length; k++) {
