@@ -455,6 +455,11 @@ footer { max-width: 1360px; width: 100%; margin: 0 auto; padding: 8px 24px 32px;
       <div class="card-h"><h2 id="setH">Settings</h2></div>
       <div class="card-b">
         <div class="setting">
+          <div class="setting-h"><label for="gemSlider">Hidden gems</label><span id="gemVal" class="mono">A little</span></div>
+          <input type="range" min="0" max="4" step="1" value="1" id="gemSlider">
+          <small>Turn it up to favour less-known titles over the obvious hits. Good if you have seen most of the popular ones.</small>
+        </div>
+        <div class="setting">
           <div class="setting-h"><label for="wildSlider">Variety (wildcards per list)</label><span id="wildVal" class="mono">2</span></div>
           <input type="range" min="0" max="4" step="1" value="2" id="wildSlider">
           <small>Wildcards are well-rated titles outside your usual taste. They help the algorithm learn what else you like.</small>
@@ -500,6 +505,7 @@ footer { max-width: 1360px; width: 100%; margin: 0 auto; padding: 8px 24px 32px;
 <footer>This product uses the TMDB API but is not endorsed or certified by TMDB. Film and TV data, images and trailers courtesy of The Movie Database. Availability data from JustWatch. <button type="button" id="keyReset" class="pill-btn" hidden>Change TMDB key</button></footer>
 <script src="engine.js"></script>
 <script src="tmdb-core.js"></script>
+<script src="catalog.js"></script>
 <script>
 (function () {
   'use strict';
@@ -570,7 +576,47 @@ footer { max-width: 1360px; width: 100%; margin: 0 auto; padding: 8px 24px 32px;
       throw new Error('Unknown route.');
     }).catch(function (e) { throw clientError(e); });
   }
+  // ---------- catalogue mode: a pre-built catalog.js (built monthly from TMDB), so there is no server and no key ----------
+  var CAT = null;
+  (function () {
+    var fc = window.FILM_CATALOG; if (!fc || !fc.cols || !fc.movie) return;
+    var cl = function (x, a, b) { return Math.max(a, Math.min(b, x)); };
+    CAT = { regions: fc.regions || ['GB'], built: fc.built, movie: [], tv: [] };
+    ['movie', 'tv'].forEach(function (kind) {
+      CAT[kind] = (fc[kind] || []).map(function (r) {
+        var o = {}; fc.cols.forEach(function (c, i) { o[c] = r[i]; });
+        var adj = (o.votes * o.rating + 500 * 6.6) / (o.votes + 500);
+        o.kind = kind; o.q = cl((adj - 6.5) / 2.8, 0, 1); o.poster = o.poster || null; o.backdrop = o.backdrop || null; o.trailer = o.trailer || null;
+        o.p = o.p || {}; o._t = ' ' + String(o.title).toLowerCase().replace(/[^a-z0-9À-￿]+/g, ' ');
+        return o;
+      });
+    });
+    window.FILM_CATALOG = null;
+  })();
+  var catalogMode = !!CAT, SRC = catalogMode ? 'the catalogue' : 'TMDB';
+  function searchCat(kind, q) {
+    var words = String(q).toLowerCase().replace(/[^a-z0-9À-￿]+/g, ' ').trim().split(' ').filter(Boolean); if (!words.length) return [];
+    var full = ' ' + words.join(' '), out = [];
+    CAT[kind].forEach(function (f) {
+      var sc = 0;
+      if (f._t.indexOf(full) === 0) sc = 3;
+      else if (words.every(function (w) { return f._t.indexOf(' ' + w) >= 0; })) sc = 2;
+      if (sc) out.push([sc, f]);
+    });
+    out.sort(function (a, b) { return b[0] - a[0] || b[1].votes - a[1].votes; });
+    return out.slice(0, 8).map(function (x) { var f = x[1]; return { id: f.id, kind: kind, title: f.title, year: f.year, rating: f.rating, votes: f.votes, poster: f.poster }; });
+  }
+  function catalog_api(path) {
+    var u = new URL(path, 'http://x'), q = u.searchParams, kind = q.get('kind') === 'tv' ? 'tv' : 'movie';
+    return Promise.resolve().then(function () {
+      if (u.pathname === '/api/status') return { configured: true };
+      if (u.pathname === '/api/search') return { results: searchCat(kind, q.get('q') || '') };
+      if (u.pathname === '/api/pool') return { films: CAT[kind] };
+      throw new Error('Unknown route.');
+    });
+  }
   function api(path) {
+    if (catalogMode) return catalog_api(path);
     if (direct) return direct_api(path);
     var ctl = typeof AbortController === 'function' ? new AbortController() : null, tm = ctl && setTimeout(function () { ctl.abort(); }, 90000);
     return fetch(API + path, ctl ? { signal: ctl.signal } : undefined).then(function (r) {
@@ -583,6 +629,7 @@ footer { max-width: 1360px; width: 100%; margin: 0 auto; padding: 8px 24px 32px;
   }
 
   var REGIONS = { GB: 'United Kingdom', US: 'United States', IE: 'Ireland', CA: 'Canada', AU: 'Australia', NZ: 'New Zealand', DE: 'Germany', FR: 'France', ES: 'Spain', IT: 'Italy', NL: 'Netherlands', SE: 'Sweden', IN: 'India', BR: 'Brazil', MX: 'Mexico', JP: 'Japan' };
+  if (catalogMode) { Object.keys(REGIONS).forEach(function (cc) { if (CAT.regions.indexOf(cc) < 0) delete REGIONS[cc]; }); CAT.regions.forEach(function (cc) { if (!REGIONS[cc]) REGIONS[cc] = cc; }); }
   // Every TMDB genre is listed in the taste profile, even before you have rated anything in it.
   var GENRES = {
     movie: ['Action', 'Adventure', 'Animation', 'Comedy', 'Crime', 'Documentary', 'Drama', 'Family', 'Fantasy', 'History', 'Horror', 'Music', 'Mystery', 'Romance', 'Science Fiction', 'Thriller', 'TV Movie', 'War', 'Western'],
@@ -616,7 +663,7 @@ footer { max-width: 1360px; width: 100%; margin: 0 auto; padding: 8px 24px 32px;
   // ---------- state ----------
   function freshSession() {
     return { seeds: [], loved: [], rated: {}, shown: [], listNo: 0, list: null, listProfile: [], logs: [], weights: E.INIT_W.slice(), history: [],
-      curveList: [], curveW: [], evolveRuns: 0, wild: 2, pop: 60, useGA: true, featured: null, keep: [], activity: [], warn: '', seedsKey: '' };
+      curveList: [], curveW: [], evolveRuns: 0, wild: 2, gems: 1, pop: 60, useGA: true, featured: null, keep: [], activity: [], warn: '', seedsKey: '' };
   }
   function detectRegion() {
     var m = (navigator.language || '').match(/-([A-Za-z]{2})$/);
@@ -640,6 +687,7 @@ footer { max-width: 1360px; width: 100%; margin: 0 auto; padding: 8px 24px 32px;
     return a;
   }
   var app = load();
+  if (catalogMode && !REGIONS[app.region]) app.region = CAT.regions[0];
   var pools = { movie: new Map(), tv: new Map() }, Cs = { movie: null, tv: null };
   var busy = false, ready = false, tab = 'genres', flash = '';   // flash: a transient banner (an error, or the all-rated notice)
   function sess() { return app.sessions[app.kind]; }
@@ -711,6 +759,7 @@ footer { max-width: 1360px; width: 100%; margin: 0 auto; padding: 8px 24px 32px;
   function forgetKey() { LS.del(KEYSTORE); client = null; ready = false; $('keyReset').hidden = true; showKeyForm(''); renderAll(); }
   $('keyReset').addEventListener('click', forgetKey);
   function checkStatus() {
+    if (catalogMode) { ready = true; $('setup').hidden = true; $('keyReset').hidden = true; renderAll(); return Promise.resolve(); }
     var saved = LS.get(KEYSTORE);
     var useDirect = function () { direct = true; return saved ? connectDirect(saved, false) : (showKeyForm(''), renderAll(), Promise.resolve()); };
     if (direct) return useDirect();
@@ -722,6 +771,7 @@ footer { max-width: 1360px; width: 100%; margin: 0 auto; padding: 8px 24px 32px;
 
   // ---------- candidate pool ----------
   function fetchPool(kind, ids) {
+    if (catalogMode && Cs[kind] && pools[kind].size >= CAT[kind].length) return Promise.resolve();   // the whole catalogue is already loaded
     return api('/api/pool?kind=' + kind + '&seeds=' + ids.join(',')).then(function (d) {
       d.films.forEach(function (f) { pools[kind].set(f.id, f); });
       if (pools[kind].size > 1500) { var keep = new Map(); d.films.forEach(function (f) { keep.set(f.id, f); }); pools[kind] = keep; }
@@ -746,18 +796,18 @@ footer { max-width: 1360px; width: 100%; margin: 0 auto; padding: 8px 24px 32px;
     if (mode === 'new') { S.loved = []; S.rated = {}; S.shown = []; S.listNo = 0; S.list = null; S.listProfile = []; S.featured = null; }
     if (mode === 'next' && S.list) S.list.forEach(function (it) { if (S.shown.indexOf(it.id) < 0) S.shown.push(it.id); });
     var pid = profileIds(S);
-    $('pickNote').innerHTML = '<span class="spinner" aria-hidden="true"></span>Fetching candidates from TMDB. A new taste can take up to a minute the first time.';
+    $('pickNote').innerHTML = '<span class="spinner" aria-hidden="true"></span>' + (catalogMode ? 'Finding your picks…' : 'Fetching candidates from TMDB. A new taste can take up to a minute the first time.');
     // List 2 onwards: reuse the candidates we already have so the next list is instant, and widen the pool around
     // what you loved in the background (it is used from the following list). Only the first list waits on TMDB.
     var have = pools[kind].size >= 50 && pid.every(function (id) { return pools[kind].has(id); });
     var step = have ? (mode === 'next' ? (fetchPool(kind, pid).catch(function () { /* optional */ }), Promise.resolve()) : Promise.resolve()) : fetchPool(kind, pid);
     return step.then(function () {
       var c = Cs[kind], prof = idxOf(c, pid);
-      if (prof.length < 2) throw new Error('TMDB did not return details for your seeds. Try different titles.');
+      if (prof.length < 2) throw new Error((catalogMode ? 'Those titles are not in the catalogue' : 'TMDB did not return details for your seeds') + '. Try different titles.');
       var ex = new Set(idxOf(c, S.seeds.map(function (s) { return s.id; }).concat(S.shown, S.loved, Object.keys(S.rated).map(Number))));
       for (var i = 0; i < c.films.length; i++) if (!onMine(c.films[i])) ex.add(i);
       var rng = E.mulberry32((Date.now() & 0xffffff) ^ (S.listNo * 7919));
-      var rec = E.recommend(c, prof, S.weights, ex, rng, { useGA: S.useGA, wild: S.wild, pop: S.pop });
+      var rec = E.recommend(c, prof, S.weights, ex, rng, { useGA: S.useGA, wild: S.wild, pop: S.pop, gems: (S.gems || 0) / 4 });
       if (!rec.items.length) { S.warn = 'none'; log('SYSTEM', 'No titles left that match your filters.'); return; }
       S.warn = rec.items.length < 10 ? 'few' : '';
       S.list = rec.items.map(function (it) { return { id: c.films[it.id].id, wildcard: it.wildcard, seed: c.films[it.seed].id, why: it.why }; });
@@ -790,7 +840,7 @@ footer { max-width: 1360px; width: 100%; margin: 0 auto; padding: 8px 24px 32px;
     var q = input.value.trim();
     if (q.length < 2) { closeSugg(); return; }
     var my = ++seq;
-    showSugg('<li class="none" aria-disabled="true">Searching TMDB…</li>');
+    showSugg('<li class="none" aria-disabled="true">Searching…</li>');
     api('/api/search?kind=' + app.kind + '&q=' + encodeURIComponent(q)).then(function (d) {
       if (my !== seq) return;
       var have = sess().seeds.map(function (s) { return s.id; });
@@ -841,7 +891,7 @@ footer { max-width: 1360px; width: 100%; margin: 0 auto; padding: 8px 24px 32px;
   $('quick').addEventListener('click', function (e) {
     var b = e.target.closest('button[data-q]'); if (!b || busy) return;
     var titles = QUICK[app.kind][parseInt(b.getAttribute('data-q'), 10)][1], kind = app.kind;
-    busy = true; renderSeeds(); $('pickNote').textContent = 'Looking up the titles on TMDB…';
+    busy = true; renderSeeds(); $('pickNote').textContent = 'Looking up the titles on ' + SRC + '…';
     Promise.all(titles.map(function (t) {
       return api('/api/search?kind=' + kind + '&q=' + encodeURIComponent(t)).then(function (d) {
         var exact = d.results.filter(function (r) { return r.title.toLowerCase() === t.toLowerCase(); }).sort(function (a, b2) { return b2.votes - a.votes; });
@@ -849,7 +899,7 @@ footer { max-width: 1360px; width: 100%; margin: 0 auto; padding: 8px 24px 32px;
       });
     })).then(function (found) {
       var ok = found.filter(Boolean);
-      if (ok.length < 2) throw new Error('TMDB did not return enough of those titles. Search for your own.');
+      if (ok.length < 2) throw new Error((catalogMode ? 'The catalogue' : 'TMDB') + ' did not return enough of those titles. Search for your own.');
       sess().seeds = ok.map(function (f) { return { id: f.id, title: f.title, year: f.year, poster: f.poster || null }; });
       busy = false; save(); runGenerate('new');
     }).catch(function (err) { busy = false; renderSeeds(); $('pickNote').textContent = err.message; });
@@ -967,6 +1017,9 @@ footer { max-width: 1360px; width: 100%; margin: 0 auto; padding: 8px 24px 32px;
   });
 
   // ---------- settings, services, region, theme, kind ----------
+  var GEM_LABELS = ['Off', 'A little', 'More', 'Mostly', 'Only gems'];
+  $('gemSlider').addEventListener('input', function () { sess().gems = parseInt(this.value, 10); $('gemVal').textContent = GEM_LABELS[this.value]; });
+  $('gemSlider').addEventListener('change', save);
   $('wildSlider').addEventListener('input', function () { sess().wild = parseInt(this.value, 10); $('wildVal').textContent = this.value; });
   $('wildSlider').addEventListener('change', save);
   $('popSlider').addEventListener('input', function () { sess().pop = parseInt(this.value, 10); $('popVal').textContent = this.value; });
@@ -1082,7 +1135,7 @@ footer { max-width: 1360px; width: 100%; margin: 0 auto; padding: 8px 24px 32px;
     var same = has && S.seedsKey === seedsKey(S);
     var go = $('go'); go.disabled = busy || !ready || n < 2;
     go.textContent = busy ? 'Working…' : !has ? 'Get my picks' : same ? 'Refresh picks' : 'Update picks';
-    if (!busy) { var note = $('pickNote'); if (!/TMDB did not|Looking up|maximum|Five/.test(note.textContent) || n < 5) note.textContent = !ready ? '' : n < 2 ? 'Pick at least 2 ' + noun(true) + ' to get recommendations.' : n < 5 ? 'You can add up to ' + (5 - n) + ' more.' : ''; }
+    if (!busy) { var note = $('pickNote'); if (!/TMDB did not|The catalogue did not|Looking up|maximum|Five/.test(note.textContent) || n < 5) note.textContent = !ready ? '' : n < 2 ? 'Pick at least 2 ' + noun(true) + ' to get recommendations.' : n < 5 ? 'You can add up to ' + (5 - n) + ' more.' : ''; }
     var banner = '';
     if (S.warn === 'none') banner = '<div class="notice warn">Nothing left that matches. Loosen the services filter, change your seeds, or start over.</div>';
     else if (S.warn === 'few') banner = '<div class="notice warn">Only a few matches are left for this taste' + (app.onlyMine ? ' and your services filter' : '') + '. Try new seeds or turn the filter off.</div>';
@@ -1209,6 +1262,7 @@ footer { max-width: 1360px; width: 100%; margin: 0 auto; padding: 8px 24px 32px;
   }
   function renderSettings() {
     var S = sess();
+    $('gemSlider').value = S.gems || 0; $('gemVal').textContent = GEM_LABELS[S.gems || 0];
     $('wildSlider').value = S.wild; $('wildVal').textContent = S.wild; $('popSlider').value = S.pop; $('popVal').textContent = S.pop; $('useGA').checked = S.useGA;
   }
   function spark(curve, title, note) {
