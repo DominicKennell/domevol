@@ -763,10 +763,21 @@ footer { max-width: 1360px; width: 100%; margin: 0 auto; padding: 8px 24px 32px;
     var saved = LS.get(KEYSTORE);
     var useDirect = function () { direct = true; return saved ? connectDirect(saved, false) : (showKeyForm(''), renderAll(), Promise.resolve()); };
     if (direct) return useDirect();
-    return api('/api/status').then(function (s) {
-      if (s.configured) { ready = true; $('setup').hidden = true; renderAll(); return Promise.resolve(); }
-      return useDirect();
-    }).catch(useDirect);
+    // A free host sleeps when idle and answers the first requests with an error page while it wakes (up to a minute).
+    // Only a clear "no key configured" answer shows the key form; a failed request is retried first.
+    var tries = 0, MAX_TRIES = 9;
+    function attempt() {
+      return api('/api/status').then(function (s) {
+        if (s && s.configured) { ready = true; $('setup').hidden = true; renderAll(); return Promise.resolve(); }
+        return useDirect();
+      }, function () {
+        if (++tries >= MAX_TRIES) return useDirect();
+        $('setup').hidden = false;
+        $('setup').innerHTML = '<div class="notice" role="status"><span class="spinner" aria-hidden="true"></span>Waking the server. It sleeps when nobody has used it for a while, so this can take up to a minute.</div>';
+        return new Promise(function (r) { setTimeout(r, window.DOMEVO_RETRY_MS || 6000); }).then(attempt);
+      });
+    }
+    return attempt();
   }
 
   // ---------- candidate pool ----------
