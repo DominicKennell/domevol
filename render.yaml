@@ -1,0 +1,14 @@
+# Render Blueprint: runs the DOMEVO server with plain Node (no Docker).
+services:
+  - type: web
+    name: domevo
+    runtime: node
+    plan: free
+    buildCommand: echo "nothing to build"
+    startCommand: node server.js
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_VERSION
+        value: 22
+      - key: TMDB_API_KEY
+        sync: false

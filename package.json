@@ -1,0 +1,22 @@
+{
+  "name": "domevo",
+  "version": "2.0.0",
+  "description": "Film and TV recommendations: a genetic-algorithm recommender fed by the TMDB API",
+  "private": true,
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test/e2e.js",
+    "test:ui": "node test/ui_test.js",
+    "build": "node tools/build-standalone.js",
+    "test:direct": "npm run build && node test/direct_test.js",
+    "test:hosted": "node test/hosted_test.js",
+    "sim:ga": "node test/ga_sim.js"
+  },
+  "devDependencies": {
+    "jsdom": "^24.1.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
