@@ -572,12 +572,14 @@ footer { max-width: 1360px; width: 100%; margin: 0 auto; padding: 8px 24px 32px;
   }
   function api(path) {
     if (direct) return direct_api(path);
-    return fetch(API + path).then(function (r) {
+    var ctl = typeof AbortController === 'function' ? new AbortController() : null, tm = ctl && setTimeout(function () { ctl.abort(); }, 90000);
+    return fetch(API + path, ctl ? { signal: ctl.signal } : undefined).then(function (r) {
+      clearTimeout(tm);
       return r.json().catch(function () { return null; }).then(function (j) {
         if (!r.ok) { var e = new Error((j && j.error) || ('The server returned ' + r.status + '.')); e.code = j && j.code; throw e; }
         return j;
       });
-    });
+    }, function (e) { clearTimeout(tm); throw new Error(e && e.name === 'AbortError' ? 'The server took too long to answer. Try again in a moment.' : 'Could not reach the server. Check your connection and try again.'); });
   }
 
   var REGIONS = { GB: 'United Kingdom', US: 'United States', IE: 'Ireland', CA: 'Canada', AU: 'Australia', NZ: 'New Zealand', DE: 'Germany', FR: 'France', ES: 'Spain', IT: 'Italy', NL: 'Netherlands', SE: 'Sweden', IN: 'India', BR: 'Brazil', MX: 'Mexico', JP: 'Japan' };
@@ -744,8 +746,12 @@ footer { max-width: 1360px; width: 100%; margin: 0 auto; padding: 8px 24px 32px;
     if (mode === 'new') { S.loved = []; S.rated = {}; S.shown = []; S.listNo = 0; S.list = null; S.listProfile = []; S.featured = null; }
     if (mode === 'next' && S.list) S.list.forEach(function (it) { if (S.shown.indexOf(it.id) < 0) S.shown.push(it.id); });
     var pid = profileIds(S);
-    $('pickNote').innerHTML = '<span class="spinner" aria-hidden="true"></span>Fetching candidates from TMDB. A new taste takes a few seconds the first time.';
-    return fetchPool(kind, pid).then(function () {
+    $('pickNote').innerHTML = '<span class="spinner" aria-hidden="true"></span>Fetching candidates from TMDB. A new taste can take up to a minute the first time.';
+    // List 2 onwards: reuse the candidates we already have so the next list is instant, and widen the pool around
+    // what you loved in the background (it is used from the following list). Only the first list waits on TMDB.
+    var have = pools[kind].size >= 50 && pid.every(function (id) { return pools[kind].has(id); });
+    var step = have ? (mode === 'next' ? (fetchPool(kind, pid).catch(function () { /* optional */ }), Promise.resolve()) : Promise.resolve()) : fetchPool(kind, pid);
+    return step.then(function () {
       var c = Cs[kind], prof = idxOf(c, pid);
       if (prof.length < 2) throw new Error('TMDB did not return details for your seeds. Try different titles.');
       var ex = new Set(idxOf(c, S.seeds.map(function (s) { return s.id; }).concat(S.shown, S.loved, Object.keys(S.rated).map(Number))));
