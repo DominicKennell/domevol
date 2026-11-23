@@ -277,13 +277,22 @@ body.welcome #seedCard .card-h { flex-direction: column; align-items: center; ga
 body.welcome #seedCard .card-h h2 { font-size: clamp(1.6rem, 4vw, 2.3rem); font-weight: 700; letter-spacing: -0.02em; }
 body.welcome #seedCard .card-h .sub { font-size: 1rem; text-align: center; }
 body.welcome #seedCard .card-b { gap: 18px; padding-inline: 0; }
+.adv { border: 0; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.adv legend { padding: 0; font-size: 0.8125rem; font-weight: 600; color: var(--fg-soft); margin-bottom: 8px; }
+.advseg { display: flex; flex-wrap: wrap; gap: 2px; padding: 3px; width: 100%; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-md); }
+.advseg button { flex: 1 1 0; min-width: 0; height: 34px; padding: 0 8px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); font-size: 0.8125rem; font-weight: 600; white-space: nowrap; }
+.advseg button:hover { color: var(--fg); }
+.advseg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); }
+body.welcome .adv { align-items: center; text-align: center; }
+body.welcome .advseg { max-width: 560px; }
 body.welcome #heroSearch .search { max-width: none; }
 body.welcome #heroSearch .search input { height: 56px; font-size: 1.05rem; padding-left: 50px; border-width: 2px; border-color: var(--accent-line); }
 body.welcome #heroSearch .search > svg { left: 18px; top: 28px; width: 20px; height: 20px; }
 body.welcome .chips, body.welcome .quick, body.welcome .row { justify-content: center; }
 #heroSearch:empty { display: none; }
 body.welcome #seedCard .card-b { display: flex; flex-direction: column; }
-body.welcome #heroSearch { order: 1; } body.welcome .chips { order: 2; } body.welcome #seedCard .row { order: 3; } body.welcome #banner { order: 3; } body.welcome #tilesWrap { order: 4; } body.welcome .quick { order: 5; }
+body.welcome #heroSearch { order: 1; } body.welcome .chips { order: 2; } 
+body.welcome #adv { order: 3; } body.welcome #seedCard .row, body.welcome #banner { order: 4; } body.welcome #tilesWrap { order: 5; } body.welcome .quick { order: 6; }
 #tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 12px; margin-top: 10px; }
 .tile { position: relative; padding: 0; border: 2px solid transparent; border-radius: var(--r-md); background: var(--surface-2); overflow: hidden; aspect-ratio: 2 / 3; color: var(--fg); text-align: left; transition: transform 0.15s ease, border-color 0.15s ease; }
 .tile:hover:not(:disabled) { transform: translateY(-2px); border-color: var(--accent-line); }
@@ -362,6 +371,16 @@ footer { max-width: 1360px; width: 100%; margin: 0 auto; padding: 8px 24px 32px;
         <div id="tilesWrap" hidden><span class="help" id="tilesHelp"></span><div class="tiles" id="tiles"></div></div>
         <div class="chips" id="chips" aria-live="polite"></div>
         <div class="quick" id="quick"></div>
+        <fieldset class="adv" id="adv">
+          <legend>How adventurous should the picks be?</legend>
+          <div class="advseg" role="group" aria-label="How adventurous should the picks be?">
+            <button type="button" data-p="0" aria-pressed="false">Safe bets</button>
+            <button type="button" data-p="1" aria-pressed="true">Balanced</button>
+            <button type="button" data-p="2" aria-pressed="false">Adventurous</button>
+            <button type="button" data-p="3" aria-pressed="false">Deep cuts</button>
+          </div>
+          <span class="help" id="advHelp" aria-live="polite"></span>
+        </fieldset>
         <div class="row">
           <button type="button" class="btn primary" id="go">Get my picks</button>
           <span class="help" id="pickNote" aria-live="polite"></span>
@@ -1028,11 +1047,28 @@ footer { max-width: 1360px; width: 100%; margin: 0 auto; padding: 8px 24px 32px;
   });
 
   // ---------- settings, services, region, theme, kind ----------
+  var ADV = [
+    { gems: 0, wild: 1, help: 'Well-known, well-rated titles close to your taste, with one stretch pick.' },
+    { gems: 1, wild: 2, help: 'A mix of familiar and less obvious titles, with two stretch picks.' },
+    { gems: 2, wild: 3, help: 'Leans towards lesser-known titles, with three stretch picks. Good if you have seen or read a lot.' },
+    { gems: 4, wild: 4, help: 'Mostly obscure titles and four stretch picks. Expect to recognise very few.' }
+  ];
   var GEM_LABELS = ['Off', 'A little', 'More', 'Mostly', 'Only gems'];
-  $('gemSlider').addEventListener('input', function () { sess().gems = parseInt(this.value, 10); $('gemVal').textContent = GEM_LABELS[this.value]; });
+  $('gemSlider').addEventListener('input', function () { sess().gems = parseInt(this.value, 10); $('gemVal').textContent = GEM_LABELS[this.value]; renderAdv(); });
   $('gemSlider').addEventListener('change', save);
-  $('wildSlider').addEventListener('input', function () { sess().wild = parseInt(this.value, 10); $('wildVal').textContent = this.value; });
+  $('wildSlider').addEventListener('input', function () { sess().wild = parseInt(this.value, 10); $('wildVal').textContent = this.value; renderAdv(); });
   $('wildSlider').addEventListener('change', save);
+  // "How adventurous?" presets on the first screen: each one sets both the hidden-gems level and the wildcard count.
+  function renderAdv() {
+    var S = sess(), hit = -1;
+    ADV.forEach(function (a, i) { if ((S.gems || 0) === a.gems && S.wild === a.wild) hit = i; });
+    Array.prototype.forEach.call(document.querySelectorAll('#adv button'), function (b) { b.setAttribute('aria-pressed', String(parseInt(b.getAttribute('data-p'), 10) === hit)); });
+    $('advHelp').textContent = hit >= 0 ? ADV[hit].help.replace('titles', 'titles') : 'Custom: set in Settings (hidden gems ' + GEM_LABELS[S.gems || 0].toLowerCase() + ', ' + S.wild + ' wildcards).';
+  }
+  document.getElementById('adv').addEventListener('click', function (e) {
+    var b = e.target.closest ? e.target.closest('button[data-p]') : null; if (!b) return;
+    var a = ADV[parseInt(b.getAttribute('data-p'), 10)], S = sess(); S.gems = a.gems; S.wild = a.wild; save(); renderSettings();
+  });
   $('popSlider').addEventListener('input', function () { sess().pop = parseInt(this.value, 10); $('popVal').textContent = this.value; });
   $('popSlider').addEventListener('change', save);
   $('useGA').addEventListener('change', function () { sess().useGA = this.checked; save(); });
@@ -1273,7 +1309,7 @@ footer { max-width: 1360px; width: 100%; margin: 0 auto; padding: 8px 24px 32px;
   }
   function renderSettings() {
     var S = sess();
-    $('gemSlider').value = S.gems || 0; $('gemVal').textContent = GEM_LABELS[S.gems || 0];
+    $('gemSlider').value = S.gems || 0; $('gemVal').textContent = GEM_LABELS[S.gems || 0]; renderAdv();
     $('wildSlider').value = S.wild; $('wildVal').textContent = S.wild; $('popSlider').value = S.pop; $('popVal').textContent = S.pop; $('useGA').checked = S.useGA;
   }
   function spark(curve, title, note) {
