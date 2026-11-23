@@ -79,6 +79,7 @@ ul, ol { padding: 0; list-style: none; }
 .sugg .m { display: block; font-size: 0.75rem; color: var(--muted); }
 .sugg .none { display: block; grid-template-columns: 1fr; color: var(--muted); font-size: 0.875rem; cursor: default; }
 .readout { display: flex; align-items: center; gap: 14px; flex: none; font-size: 0.8125rem; color: var(--muted); }
+.readout[hidden] { display: none; }
 .readout b { color: var(--fg); font-family: var(--mono); font-weight: 500; margin-left: 4px; }
 .readout .sep { width: 1px; height: 16px; background: var(--line); }
 .icon-btn { width: 36px; height: 36px; border-radius: 50%; border: 1px solid var(--line); background: var(--surface); display: grid; place-items: center; color: var(--muted); flex: none; }
@@ -476,7 +477,7 @@ footer { max-width: 1360px; width: 100%; margin: 0 auto; padding: 8px 24px 32px;
         <div class="setting">
           <div class="setting-h"><label for="gemSlider">Hidden gems</label><span id="gemVal" class="mono">A little</span></div>
           <input type="range" min="0" max="4" step="1" value="1" id="gemSlider">
-          <small>Turn it up to favour less-known titles over the obvious hits. Good if you have seen most of the popular ones.</small>
+          <small>Also set by the buttons on the first screen. Turn it up to favour less-known titles over the obvious hits. Good if you have seen most of the popular ones.</small>
         </div>
         <div class="setting">
           <div class="setting-h"><label for="wildSlider">Variety (wildcards per list)</label><span id="wildVal" class="mono">2</span></div>
@@ -1060,10 +1061,10 @@ footer { max-width: 1360px; width: 100%; margin: 0 auto; padding: 8px 24px 32px;
   $('wildSlider').addEventListener('change', save);
   // "How adventurous?" presets on the first screen: each one sets both the hidden-gems level and the wildcard count.
   function renderAdv() {
-    var S = sess(), hit = -1;
+    var S = sess(), hit = -1, later = S.list ? ' Applies from your next list.' : '';
     ADV.forEach(function (a, i) { if ((S.gems || 0) === a.gems && S.wild === a.wild) hit = i; });
     Array.prototype.forEach.call(document.querySelectorAll('#adv button'), function (b) { b.setAttribute('aria-pressed', String(parseInt(b.getAttribute('data-p'), 10) === hit)); });
-    $('advHelp').textContent = hit >= 0 ? ADV[hit].help.replace('titles', 'titles') : 'Custom: set in Settings (hidden gems ' + GEM_LABELS[S.gems || 0].toLowerCase() + ', ' + S.wild + ' wildcards).';
+    $('advHelp').textContent = (hit >= 0 ? ADV[hit].help : 'Custom: hidden gems ' + GEM_LABELS[S.gems || 0].toLowerCase() + ', ' + S.wild + ' wildcards, set in Settings.') + later;
   }
   document.getElementById('adv').addEventListener('click', function (e) {
     var b = e.target.closest ? e.target.closest('button[data-p]') : null; if (!b) return;
@@ -1128,6 +1129,7 @@ footer { max-width: 1360px; width: 100%; margin: 0 auto; padding: 8px 24px 32px;
   function renderReadout() {
     var S = sess(), n = S.list ? S.list.length : 10, rated = S.list ? S.list.filter(function (i) { return S.rated[i.id]; }).length : 0;
     $('listNo').textContent = S.listNo; $('ratedCount').textContent = rated + '/' + n;
+    document.querySelector('.readout').hidden = !S.list;   // nothing to count until a list exists
   }
   var FEATURED = {
     movie: ['The Shawshank Redemption', 'Inception', 'The Dark Knight', 'Pulp Fiction', 'Spirited Away', 'Parasite', 'The Godfather', 'Interstellar', 'Titanic', 'La La Land', 'The Notebook', 'Get Out', 'Mad Max: Fury Road', 'Toy Story', 'The Grand Budapest Hotel', 'Superbad'],
